@@ -249,6 +249,7 @@ CONTAINS
                                       row=irow, col=icol, BLOCK=mint(i, j)%block, &
                                       found=found)
                CPASSERT(found)
+               CPASSERT(ASSOCIATED(mint(i, j)%block))
                mint(i, j)%block = 0._dp
             END DO
             END DO
@@ -684,7 +685,9 @@ CONTAINS
                NULLIFY (mint(i)%block)
                CALL dbcsr_get_block_p(matrix=moments(i)%matrix, &
                                       row=irow, col=icol, BLOCK=mint(i)%block, found=found)
-               mint(i)%block = 0._dp
+               IF (found) THEN
+                  mint(i)%block = 0._dp
+               END IF
             END DO
 
             ! fold atomic position back into unit cell
@@ -731,21 +734,26 @@ CONTAINS
                                 sphi_b(1, sgfb), SIZE(sphi_b, 1), &
                                 0.0_dp, work(1, 1), SIZE(work, 1))
 
-                     IF (iatom <= jatom) THEN
-
-                        CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
-                                   1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                                   work(1, 1), SIZE(work, 1), &
-                                   1.0_dp, mint(i)%block(sgfa, sgfb), &
-                                   SIZE(mint(i)%block, 1))
-
-                     ELSE
-
-                        CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
-                                   1.0_dp, work(1, 1), SIZE(work, 1), &
-                                   sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                                   1.0_dp, mint(i)%block(sgfb, sgfa), &
-                                   SIZE(mint(i)%block, 1))
+                      IF (iatom <= jatom) THEN
+                        IF (found) THEN
+                           ! The block of moments matrix mint(i)%block is on the output -> Do not perform if not present
+                           CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
+                                    1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                                    work(1, 1), SIZE(work, 1), &
+                                    1.0_dp, mint(i)%block(sgfa, sgfb), &
+                                    SIZE(mint(i)%block, 1))
+                        END IF
+ 
+                      ELSE
+                       IF (found) THEN
+                          ! The block of moments matrix mint(i)%block is on the output -> Do not perform if not present
+                           CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
+                                    1.0_dp, work(1, 1), SIZE(work, 1), &
+                                    sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                                    1.0_dp, mint(i)%block(sgfb, sgfa), &
+                                    SIZE(mint(i)%block, 1))
+                        END IF
+                      END IF
 
                      END IF
 
