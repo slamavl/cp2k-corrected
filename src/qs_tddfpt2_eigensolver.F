@@ -53,6 +53,7 @@ MODULE qs_tddfpt2_eigensolver
    USE qs_tddfpt2_types,                ONLY: tddfpt_ground_state_mos,&
                                               tddfpt_work_matrices
    USE qs_tddfpt2_utils,                ONLY: tddfpt_total_number_of_states
+   USE util,                            ONLY: sort
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE

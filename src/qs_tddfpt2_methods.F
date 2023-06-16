@@ -69,7 +69,7 @@ MODULE qs_tddfpt2_methods
    USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE qs_tddfpt2_densities,            ONLY: tddfpt_construct_aux_fit_density,&
                                               tddfpt_construct_ground_state_orb_density
-   USE qs_tddfpt2_eigensolver,          ONLY: tddfpt_davidson_solver,tddfpt_jacobi_davidson_solver&
+   USE qs_tddfpt2_eigensolver,          ONLY: tddfpt_davidson_solver,tddfpt_jacobi_davidson_solver,&
                                               tddfpt_orthogonalize_psi1_psi0,&
                                               tddfpt_orthonormalize_psi1_psi1
    USE qs_tddfpt2_forces,               ONLY: tddfpt_forces_main
@@ -145,7 +145,7 @@ CONTAINS
       LOGICAL                                            :: do_admm, do_exck, do_hfx, do_hfxlr, &
                                                             explicit, is_restarted, state_change
       REAL(kind=dp)                                      :: conv
-      REAL(kind=dp)                                      :: lambd
+      REAL(kind=dp)                                      :: lambda
       REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: evals, ostrength
       TYPE(admm_type), POINTER                           :: admm_env
       TYPE(cell_type), POINTER                           :: cell
