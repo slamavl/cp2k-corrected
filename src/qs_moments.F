@@ -745,7 +745,7 @@ CONTAINS
                         END IF
  
                       ELSE
-                       IF (found) THEN
+                        IF (found) THEN
                           ! The block of moments matrix mint(i)%block is on the output -> Do not perform if not present
                            CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
                                     1.0_dp, work(1, 1), SIZE(work, 1), &
@@ -754,8 +754,6 @@ CONTAINS
                                     SIZE(mint(i)%block, 1))
                         END IF
                       END IF
-
-                     END IF
 
                   END DO
 
