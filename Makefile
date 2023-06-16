@@ -35,6 +35,8 @@ EXTSPACKAGES := $(shell cd $(EXTSHOME) ; find * -maxdepth 0 -type d | grep -v bu
 
 PYTHON       := /usr/bin/env python3
 
+git git submodule update --in
+
 # Common Targets ============================================================
 default_target: all
 
