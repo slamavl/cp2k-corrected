@@ -67,7 +67,7 @@ MODULE qs_tddfpt2_eigensolver
    INTEGER, PARAMETER, PRIVATE          :: maxspins = 2
 
    PUBLIC :: tddfpt_davidson_solver, tddfpt_orthogonalize_psi1_psi0, &
-             tddfpt_orthonormalize_psi1_psi1
+             tddfpt_orthonormalize_psi1_psi1,tddfpt_jacobi_davidson_solver
 
 ! **************************************************************************************************
 
@@ -457,22 +457,26 @@ CONTAINS
 !>    * 03.2017 altered prototype, OpenMP parallelisation [Sergey Chulkov]
 ! **************************************************************************************************
    SUBROUTINE tddfpt_compute_ritz_vects(ritz_vects, Aop_ritz, evals, krylov_vects, Aop_krylov, &
-                                        Atilde, nkvo, nkvn)
+                                        Atilde,lambda, nkvo, nkvn)
       TYPE(cp_fm_type), DIMENSION(:, :), INTENT(IN)      :: ritz_vects, Aop_ritz
       REAL(kind=dp), DIMENSION(:), INTENT(out)           :: evals
       TYPE(cp_fm_type), DIMENSION(:, :), INTENT(IN)      :: krylov_vects, Aop_krylov
       REAL(kind=dp), DIMENSION(:, :), POINTER            :: Atilde
+      REAL(kind=dp), INTENT(IN)                          :: lambda
       INTEGER, INTENT(IN)                                :: nkvo, nkvn
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'tddfpt_compute_ritz_vects'
 
       INTEGER                                            :: handle, ikv, irv, ispin, nkvs, nrvs, &
-                                                            nspins
+                                                            nspins, istate
       REAL(kind=dp)                                      :: act
       REAL(kind=dp), ALLOCATABLE, DIMENSION(:, :)        :: at12, at21, at22, evects_Atilde
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_global
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
-      TYPE(cp_fm_type)                                   :: Atilde_fm, evects_Atilde_fm
+      TYPE(cp_fm_type)                                   :: Atilde_fm, evects_Atilde_fm,evects_Atilde_fm2
+      REAL(kind=dp),ALLOCATABLE, DIMENSION(:)            :: evals_unsort,evals_dist
+      INTEGER,ALLOCATABLE, DIMENSION(:)                  :: inds
+
 
       CALL timeset(routineN, handle)
 
@@ -486,7 +490,11 @@ CONTAINS
       CALL cp_fm_struct_create(fm_struct, nrow_global=nkvs, ncol_global=nkvs, context=blacs_env_global)
       CALL cp_fm_create(Atilde_fm, fm_struct)
       CALL cp_fm_create(evects_Atilde_fm, fm_struct)
+      CALL cp_fm_create(evects_Atilde_fm2, fm_struct)
       CALL cp_fm_struct_release(fm_struct)
+      ALLOCATE (evals_unsort(nkvs))
+      ALLOCATE (evals_dist(nkvs))
+      ALLOCATE (inds(nkvs))
 
       ! *** compute upper-diagonal reduced action matrix ***
       CALL reallocate(Atilde, 1, nkvs, 1, nkvs)
@@ -513,11 +521,31 @@ CONTAINS
       CALL cp_fm_set_submatrix(Atilde_fm, Atilde)
 
       ! *** solve an eigenproblem for the reduced matrix ***
-      CALL choose_eigv_solver(Atilde_fm, evects_Atilde_fm, evals(1:nkvs))
+      CALL choose_eigv_solver(Atilde_fm, evects_Atilde_fm, evals_unsort(1:nkvs))
+      !CALL choose_eigv_solver(Atilde_fm, evects_Atilde_fm, evals(1:nkvs))
+
+      ! *** Sort vectors and eigenvalues according to distance from lambda
+      DO istate = 1, nkvs
+         evals_dist(istate) = ABS(evals_unsort(istate) - lambda)
+      END DO
+      CALL sort(evals_dist, nkvs, inds)
+
+      !WRITE(*,*) "Before sort:",inds,evals_unsort
+      !WRITE(*,*) "evects_Atilde_fm",evects_Atilde_fm%local_data
+      evects_Atilde_fm2%local_data = evects_Atilde_fm%local_data
+      !WRITE(*,*) "evects_Atilde_fm2",evects_Atilde_fm2%local_data
+
+      DO istate = 1, nkvs
+         evects_Atilde_fm%local_data(:,istate) = evects_Atilde_fm2%local_data(:,inds(istate))
+         evals(istate) = evals_unsort(inds(istate))
+      END DO
+
+      !WRITE(*,*) "After sort:",evals
 
       ALLOCATE (evects_Atilde(nkvs, nrvs))
       CALL cp_fm_get_submatrix(evects_Atilde_fm, evects_Atilde, start_row=1, start_col=1, n_rows=nkvs, n_cols=nrvs)
       CALL cp_fm_release(evects_Atilde_fm)
+      CALL cp_fm_release(evects_Atilde_fm2)
       CALL cp_fm_release(Atilde_fm)
 
 !$OMP PARALLEL DO DEFAULT(NONE), &
@@ -542,6 +570,9 @@ CONTAINS
 !$OMP END PARALLEL DO
 
       DEALLOCATE (evects_Atilde)
+      DEALLOCATE (evals_unsort)
+      DEALLOCATE (evals_dist)
+      DEALLOCATE (inds)
 
       CALL timestop(handle)
 
@@ -698,7 +729,7 @@ CONTAINS
                                                             nstates_conv, nvects_exist, nvects_new
       INTEGER(kind=int_8)                                :: nstates_total
       LOGICAL                                            :: do_hfx, is_nonortho
-      REAL(kind=dp)                                      :: t1, t2
+      REAL(kind=dp)                                      :: t1, t2, lambda
       REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: evals_last
       REAL(kind=dp), DIMENSION(:, :), POINTER            :: Atilde
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: Aop_krylov, Aop_ritz, krylov_vects, &
@@ -768,11 +799,12 @@ CONTAINS
                                         sub_env=sub_env, &
                                         work_matrices=work_matrices)
 
+         lambda = 0.0
          CALL tddfpt_compute_ritz_vects(ritz_vects=evects, Aop_ritz=Aop_ritz, &
                                         evals=evals_last(1:nvects_exist + nvects_new), &
                                         krylov_vects=krylov_vects(:, 1:nvects_exist + nvects_new), &
                                         Aop_krylov=Aop_krylov(:, 1:nvects_exist + nvects_new), &
-                                        Atilde=Atilde, nkvo=nvects_exist, nkvn=nvects_new)
+                                        Atilde=Atilde, lambda=lambda, nkvo=nvects_exist, nkvn=nvects_new)
 
          CALL tddfpt_write_restart(evects=evects, evals=evals_last(1:nstates), gs_mos=gs_mos, &
                                    logger=logger, tddfpt_print_section=tddfpt_print_section)
@@ -873,5 +905,211 @@ CONTAINS
       CALL timestop(handle)
 
    END FUNCTION tddfpt_davidson_solver
+
+   FUNCTION tddfpt_jacobi_davidson_solver(evects, evals, S_evects, lambda, gs_mos, tddfpt_control, &
+                                   matrix_ks, qs_env, kernel_env, &
+                                   sub_env, logger, iter_unit, energy_unit, &
+                                   tddfpt_print_section, work_matrices) RESULT(conv)
+      TYPE(cp_fm_type), DIMENSION(:, :), INTENT(inout)   :: evects
+      REAL(kind=dp), DIMENSION(:), INTENT(inout)         :: evals
+      REAL(kind=dp), INTENT(in)                          :: lambda
+      TYPE(cp_fm_type), DIMENSION(:, :), INTENT(inout)   :: S_evects
+      TYPE(tddfpt_ground_state_mos), DIMENSION(:), &
+         INTENT(in)                                      :: gs_mos
+      TYPE(tddfpt2_control_type), POINTER                :: tddfpt_control
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(kernel_env_type), INTENT(in)                  :: kernel_env
+      TYPE(tddfpt_subgroup_env_type), INTENT(in)         :: sub_env
+      TYPE(cp_logger_type), POINTER                      :: logger
+      INTEGER, INTENT(in)                                :: iter_unit, energy_unit
+      TYPE(section_vals_type), POINTER                   :: tddfpt_print_section
+      TYPE(tddfpt_work_matrices), INTENT(inout)          :: work_matrices
+      REAL(kind=dp)                                      :: conv
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'tddfpt_davidson_solver'
+
+      INTEGER                                            :: handle, ispin, istate, iter, &
+                                                            max_krylov_vects, nspins, nstates, &
+                                                            nstates_conv, nvects_exist, nvects_new
+      INTEGER(kind=int_8)                                :: nstates_total
+      LOGICAL                                            :: do_hfx, is_nonortho
+      REAL(kind=dp)                                      :: t1, t2
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: evals_last
+      REAL(kind=dp), DIMENSION(:, :), POINTER            :: Atilde
+      TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: Aop_krylov, Aop_ritz, krylov_vects, &
+                                                            S_krylov
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+
+      CALL timeset(routineN, handle)
+
+      nspins = SIZE(gs_mos)
+      nstates = tddfpt_control%nstates
+      nstates_total = tddfpt_total_number_of_states(gs_mos)
+      do_hfx = tddfpt_control%do_hfx
+
+      WRITE(*,*) "   NEW",nspins,nstates,nstates_total
+
+      IF (debug_this_module) THEN
+         CPASSERT(SIZE(evects, 1) == nspins)
+         CPASSERT(SIZE(evects, 2) == nstates)
+         CPASSERT(SIZE(evals) == nstates)
+      END IF
+
+      CALL get_qs_env(qs_env, matrix_s=matrix_s)
+
+      ! adjust the number of Krylov vectors
+      max_krylov_vects = tddfpt_control%nkvs
+      IF (max_krylov_vects < nstates) max_krylov_vects = nstates
+      IF (INT(max_krylov_vects, kind=int_8) > nstates_total) max_krylov_vects = INT(nstates_total)
+
+      ALLOCATE (Aop_ritz(nspins, nstates))
+      DO istate = 1, nstates
+         DO ispin = 1, nspins
+            CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, Aop_ritz(ispin, istate))
+         END DO
+      END DO
+
+      ALLOCATE (evals_last(max_krylov_vects))
+      ALLOCATE (Aop_krylov(nspins, max_krylov_vects), krylov_vects(nspins, max_krylov_vects), &
+                S_krylov(nspins, max_krylov_vects))
+
+      DO istate = 1, nstates
+         DO ispin = 1, nspins
+            CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, krylov_vects(ispin, istate))
+            CALL cp_fm_to_fm(evects(ispin, istate), krylov_vects(ispin, istate))
+
+            CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, S_krylov(ispin, istate))
+            CALL cp_fm_to_fm(S_evects(ispin, istate), S_krylov(ispin, istate))
+
+            CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, Aop_krylov(ispin, istate))
+         END DO
+      END DO
+
+      nvects_exist = 0
+      nvects_new = nstates
+
+      t1 = m_walltime()
+
+      ALLOCATE (Atilde(1, 1))
+
+      DO
+         ! davidson iteration
+         CALL cp_iterate(logger%iter_info, iter_nr_out=iter)
+
+         CALL tddfpt_compute_Aop_evects(Aop_evects=Aop_krylov(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                        evects=krylov_vects(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                        S_evects=S_krylov(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                        gs_mos=gs_mos, tddfpt_control=tddfpt_control, &
+                                        matrix_ks=matrix_ks, &
+                                        qs_env=qs_env, kernel_env=kernel_env, &
+                                        sub_env=sub_env, &
+                                        work_matrices=work_matrices)
+
+         CALL tddfpt_compute_ritz_vects(ritz_vects=evects, Aop_ritz=Aop_ritz, &
+                                        evals=evals_last(1:nvects_exist + nvects_new), &
+                                        krylov_vects=krylov_vects(:, 1:nvects_exist + nvects_new), &
+                                        Aop_krylov=Aop_krylov(:, 1:nvects_exist + nvects_new), &
+                                        Atilde=Atilde, lambda=lambda, nkvo=nvects_exist, nkvn=nvects_new)
+
+         CALL tddfpt_write_restart(evects=evects, evals=evals_last(1:nstates), gs_mos=gs_mos, &
+                                   logger=logger, tddfpt_print_section=tddfpt_print_section)
+
+         conv = MAXVAL(ABS(evals_last(1:nstates) - evals(1:nstates)))
+
+         nvects_exist = nvects_exist + nvects_new
+         IF (nvects_exist + nvects_new > max_krylov_vects) &
+            nvects_new = max_krylov_vects - nvects_exist
+         IF (iter >= tddfpt_control%niters) nvects_new = 0
+
+         IF (conv > tddfpt_control%conv .AND. nvects_new > 0) THEN
+            ! compute residual vectors for the next iteration
+            DO istate = 1, nvects_new
+               DO ispin = 1, nspins
+                  CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, &
+                                         krylov_vects(ispin, nvects_exist + istate))
+                  CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, &
+                                         S_krylov(ispin, nvects_exist + istate))
+                  CALL fm_pool_create_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, &
+                                         Aop_krylov(ispin, nvects_exist + istate))
+               END DO
+            END DO
+
+            CALL tddfpt_compute_residual_vects(residual_vects=krylov_vects(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                               evals=evals_last(1:nvects_new), &
+                                               ritz_vects=evects(:, 1:nvects_new), Aop_ritz=Aop_ritz(:, 1:nvects_new), &
+                                               gs_mos=gs_mos, matrix_s=matrix_s(1)%matrix)
+
+            CALL tddfpt_orthogonalize_psi1_psi0(krylov_vects(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                                work_matrices%S_C0_C0T)
+
+            CALL tddfpt_orthonormalize_psi1_psi1(krylov_vects(:, 1:nvects_exist + nvects_new), nvects_new, &
+                                                 S_krylov(:, 1:nvects_exist + nvects_new), matrix_s(1)%matrix)
+
+            is_nonortho = tddfpt_is_nonorthogonal_psi1_psi0(krylov_vects(:, nvects_exist + 1:nvects_exist + nvects_new), &
+                                                            work_matrices%S_C0, tddfpt_control%orthogonal_eps)
+         ELSE
+            ! convergence or the maximum number of Krylov vectors have been achieved
+            nvects_new = 0
+            is_nonortho = .FALSE.
+         END IF
+
+         t2 = m_walltime()
+         IF (energy_unit > 0) THEN
+            WRITE (energy_unit, '(/,4X,A,T14,A,T36,A)') "State", "Exc. energy (eV)", "Convergence (eV)"
+            DO istate = 1, nstates
+               WRITE (energy_unit, '(1X,I8,T12,F14.7,T38,ES11.4)') istate, &
+                  evals_last(istate)*evolt, (evals_last(istate) - evals(istate))*evolt
+            END DO
+            WRITE (energy_unit, *)
+            CALL m_flush(energy_unit)
+         END IF
+
+         IF (iter_unit > 0) THEN
+            nstates_conv = 0
+            DO istate = 1, nstates
+               IF (ABS(evals_last(istate) - evals(istate)) <= tddfpt_control%conv) &
+                  nstates_conv = nstates_conv + 1
+            END DO
+
+            WRITE (iter_unit, '(T7,I8,T24,F7.1,T40,ES11.4,T66,I8)') iter, t2 - t1, conv, nstates_conv
+            CALL m_flush(iter_unit)
+         END IF
+
+         t1 = t2
+         evals(1:nstates) = evals_last(1:nstates)
+
+         ! nvects_new == 0 if iter >= tddfpt_control%niters
+         IF (nvects_new == 0 .OR. is_nonortho) THEN
+            ! restart Davidson iterations
+            CALL tddfpt_orthogonalize_psi1_psi0(evects, work_matrices%S_C0_C0T)
+            CALL tddfpt_orthonormalize_psi1_psi1(evects, nstates, S_evects, matrix_s(1)%matrix)
+
+            EXIT
+         END IF
+      END DO
+
+      DEALLOCATE (Atilde)
+
+      DO istate = nvects_exist + nvects_new, 1, -1
+         DO ispin = nspins, 1, -1
+            CALL fm_pool_give_back_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, Aop_krylov(ispin, istate))
+            CALL fm_pool_give_back_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, S_krylov(ispin, istate))
+            CALL fm_pool_give_back_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, krylov_vects(ispin, istate))
+         END DO
+      END DO
+      DEALLOCATE (Aop_krylov, krylov_vects, S_krylov)
+      DEALLOCATE (evals_last)
+
+      DO istate = nstates, 1, -1
+         DO ispin = nspins, 1, -1
+            CALL fm_pool_give_back_fm(work_matrices%fm_pool_ao_mo_occ(ispin)%pool, Aop_ritz(ispin, istate))
+         END DO
+      END DO
+      DEALLOCATE (Aop_ritz)
+
+      CALL timestop(handle)
+
+   END FUNCTION tddfpt_jacobi_davidson_solver
 
 END MODULE qs_tddfpt2_eigensolver

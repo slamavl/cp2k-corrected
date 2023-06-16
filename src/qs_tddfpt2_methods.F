@@ -69,7 +69,7 @@ MODULE qs_tddfpt2_methods
    USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE qs_tddfpt2_densities,            ONLY: tddfpt_construct_aux_fit_density,&
                                               tddfpt_construct_ground_state_orb_density
-   USE qs_tddfpt2_eigensolver,          ONLY: tddfpt_davidson_solver,&
+   USE qs_tddfpt2_eigensolver,          ONLY: tddfpt_davidson_solver,tddfpt_jacobi_davidson_solver&
                                               tddfpt_orthogonalize_psi1_psi0,&
                                               tddfpt_orthonormalize_psi1_psi1
    USE qs_tddfpt2_forces,               ONLY: tddfpt_forces_main
@@ -145,6 +145,7 @@ CONTAINS
       LOGICAL                                            :: do_admm, do_exck, do_hfx, do_hfxlr, &
                                                             explicit, is_restarted, state_change
       REAL(kind=dp)                                      :: conv
+      REAL(kind=dp)                                      :: lambd
       REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: evals, ostrength
       TYPE(admm_type), POINTER                           :: admm_env
       TYPE(cell_type), POINTER                           :: cell
@@ -357,11 +358,13 @@ CONTAINS
       END IF
 
       is_restarted = nstates_read >= nstates
+      lambda = tddfpt_control%e_target   ! Target energy in Hartree
 
       ! build the list of missed singly excited states and sort them in ascending order
       ! according to their excitation energies
       log_unit = cp_print_key_unit_nr(logger, tddfpt_print_section, "GUESS_VECTORS", extension=".tddfptLog")
-      CALL tddfpt_guess_vectors(evects=evects, evals=evals, gs_mos=gs_mos, log_unit=log_unit)
+      !CALL tddfpt_guess_vectors(evects=evects, evals=evals, gs_mos=gs_mos, log_unit=log_unit)
+      CALL tddfpt_guess_vectors(evects=evects, evals=evals, gs_mos=gs_mos, log_unit=log_unit,lambda=lambda)
       CALL cp_print_key_finished_output(log_unit, logger, tddfpt_print_section, "GUESS_VECTORS")
 
       CALL tddfpt_orthogonalize_psi1_psi0(evects, work_matrices%S_C0_C0T)
@@ -386,7 +389,16 @@ CONTAINS
 
          DO
             ! *** perform Davidson iterations ***
-            conv = tddfpt_davidson_solver(evects=evects, evals=evals, S_evects=S_evects, gs_mos=gs_mos, &
+!            conv = tddfpt_davidson_solver(evects=evects, evals=evals, S_evects=S_evects, gs_mos=gs_mos, &
+!                                          tddfpt_control=tddfpt_control, &
+!                                          matrix_ks=matrix_ks, qs_env=qs_env, &
+!                                          kernel_env=kernel_env, &
+!                                          sub_env=sub_env, logger=logger, &
+!                                          iter_unit=log_unit, energy_unit=energy_unit, &
+!                                          tddfpt_print_section=tddfpt_print_section, &
+!                                          work_matrices=work_matrices)
+                                       
+            conv = tddfpt_jacobi_davidson_solver(evects=evects, evals=evals, S_evects=S_evects,lambda=lambda, gs_mos=gs_mos, &
                                           tddfpt_control=tddfpt_control, &
                                           matrix_ks=matrix_ks, qs_env=qs_env, &
                                           kernel_env=kernel_env, &
