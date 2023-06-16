@@ -483,6 +483,8 @@ MODULE cp_control_types
       INTEGER                              :: oe_corr
       !> eigenvalue shifts
       REAL(KIND=dp)                        :: ev_shift, eos_shift
+      !> Target eigenvalue
+      REAL(KIND=dp)                        :: e_target
       !> target accuracy
       REAL(kind=dp)                        :: conv
       !> the smallest excitation amplitude to print

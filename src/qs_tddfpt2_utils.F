@@ -927,9 +927,10 @@ CONTAINS
 !>       a restart file).
 !>       \endparblock
 ! **************************************************************************************************
-   SUBROUTINE tddfpt_guess_vectors(evects, evals, gs_mos, log_unit)
+   SUBROUTINE tddfpt_guess_vectors(evects, evals, gs_mos, log_unit, lambda)
       TYPE(cp_fm_type), DIMENSION(:, :), INTENT(inout)   :: evects
       REAL(kind=dp), DIMENSION(:), INTENT(inout)         :: evals
+      REAL(kind=dp), INTENT(in)                          :: lambda
       TYPE(tddfpt_ground_state_mos), &
          DIMENSION(SIZE(evects, 1)), INTENT(in)          :: gs_mos
       INTEGER, INTENT(in)                                :: log_unit
@@ -945,7 +946,7 @@ CONTAINS
       INTEGER, DIMENSION(maxspins)                       :: nmo_occ_avail, nmo_occ_selected, &
                                                             nmo_virt_selected
       REAL(kind=dp)                                      :: e_occ
-      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: e_virt_minus_occ
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: e_virt_minus_occ,e_virt_minus_occ_shift
       TYPE(cp_fm_struct_p_type), DIMENSION(maxspins)     :: fm_struct_evects
 
       CALL timeset(routineN, handle)
@@ -975,6 +976,7 @@ CONTAINS
 
       ALLOCATE (inds(nstates_selected))
       ALLOCATE (e_virt_minus_occ(nstates_selected))
+      ALLOCATE (e_virt_minus_occ_shift(nstates_selected))
 
       istate = 0
       DO ispin = 1, nspins
@@ -985,6 +987,7 @@ CONTAINS
             DO imo_virt = 1, nmo_virt_selected(ispin)
                istate = istate + 1
                e_virt_minus_occ(istate) = gs_mos(ispin)%evals_virt(imo_virt) - e_occ
+               e_virt_minus_occ_shift(istate) = ABS(e_virt_minus_occ(istate) - lambda)
             END DO
          END DO
       END DO
@@ -993,7 +996,8 @@ CONTAINS
          CPASSERT(istate == nstates_selected)
       END IF
 
-      CALL sort(e_virt_minus_occ, nstates_selected, inds)
+!      CALL sort(e_virt_minus_occ, nstates_selected, inds)
+      CALL sort(e_virt_minus_occ_shift, nstates_selected, inds)
 
       IF (nspins == 1) THEN
          ispin = 1
@@ -1056,6 +1060,7 @@ CONTAINS
       END IF
 
       DEALLOCATE (e_virt_minus_occ)
+      DEALLOCATE (e_virt_minus_occ_shift)
       DEALLOCATE (inds)
 
       CALL timestop(handle)

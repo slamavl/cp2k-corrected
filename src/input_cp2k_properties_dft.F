@@ -1479,6 +1479,16 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="E_TARGET", &
+                          variants=s2a("TARGET_ENERGY"), &
+                          description="Target excited state energy.", &
+                          usage="E_TARGET 2.500", &
+                          n_var=1, type_of_var=real_t, &
+                          unit_str="eV", &
+                          default_r_val=0.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       ! Real
       CALL keyword_create(keyword, __LOCATION__, name="CONVERGENCE", &
                           description="Target accuracy for excited state energies.", &

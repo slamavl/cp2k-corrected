@@ -1304,6 +1304,7 @@ CONTAINS
       CALL section_vals_val_get(t_section, "OE_CORR", i_val=t_control%oe_corr)
       CALL section_vals_val_get(t_section, "EV_SHIFT", r_val=t_control%ev_shift)
       CALL section_vals_val_get(t_section, "EOS_SHIFT", r_val=t_control%eos_shift)
+      CALL section_vals_val_get(t_section, "E_TARGET", r_val=t_control%e_target)
 
       CALL section_vals_val_get(t_section, "CONVERGENCE", r_val=t_control%conv)
       CALL section_vals_val_get(t_section, "MIN_AMPLITUDE", r_val=t_control%min_excitation_amplitude)
